@@ -1,0 +1,762 @@
+---
+title: "Data Science Skills Challenge : Vac-Attack sales forecasting"
+author: "William Crombie"
+date: "10/01/2023"
+output: html_document
+---
+
+
+## Intro / Background
+
+Today is December 01, 2020. You work for Vac-Attack which sells High-End Vacuums. You
+are asked by the General Manager of Sales to use the historical data to create a Forecast of
+sales expected December 2020 as well as the total expected for the month. This will help
+them to determine whether the company will meet it’s targets and ensures the stock on
+hand matches demand. You are also asked to derive any insights from your model or the
+data; especially around advertising spend.
+
+
+Vac-Attack is primarily an As-Seen-On-TV business and therefore the majority of advertising
+is TV based. The Marketing team has said that the Marketing Mix for advertising has
+changed a little as the business has gone more digital. The Marketing team also believe the
+release of the Ultra Edition Vac was received positively and generated more sales.
+Vac-Attack sells through an 0508 number and their website.
+
+In addition to the sales information above, the marketing team have provided the
+advertising buys (total spend) for December 2020 with no expectation of competitions or news stories. The Ultra Vac will continue to be sold. The company aims to sell 3,900 units in
+December.
+
+
+
+## Reproducibility: R session info
+
+It is important to be using the same version of R and associated packages when reproducing an analysis on your own machine. The session info is printed below to show that R was was running in Windows 10 under version 4.2.2 which was the most recent full release at the time of writing. All current and previous versions of R are available [here](https://cran.r-project.org/bin/windows/base/old/). Each version of R gets its own file directory on your machine so 4.2.2 can be installed if required and selected in Rstudio without overwriting your current R installation
+
+```{r}
+
+utils::sessionInfo() # get session info and version of R used for analysis
+
+```
+
+
+## Reproducibility: Packages installed
+
+All packages outside of base R that were used in the analysis are shown as commented install.packages() calls.
+Installing these packages in order is important as functions with the same name across packages can interfere with eachother when installed.
+For example, ranger and randomForest are both popular random forest packages with an importance() function. when calling the function you could be calling from either package depending on the order they were installed and libraried during the analysis.
+
+
+```{r package installs}
+#install.packages('tidyverse')  # data cleaning and manipulation package set
+#install.packages('lubridate')  #convenience functions for date changes
+#install.packages('ggplot2')    #plotting functions
+#install.packages('here')       #robust and reproducible file paths
+#install.packages('mcgv')       #regression methods
+#install.packages('caret')      #ML model development functions (used for one-hot encoding)
+#install.packages('ranger')     #random forests
+```
+
+
+
+## Reproducibility: Import data filepath
+
+The popular 'Here' package was used to set a root file path. You can see below that the filepath is pointing to the base folder provided in the challenge and not any of the folders within. This will allow the reviewer to put this .Rmd file into the DataScienceChallenge_ToSend folder on their own machine and then navigate to the MACOSX folders if needed.
+
+```{r }
+
+library(here)
+
+base_filepath <- here() #sets the filepath to loaction of the script running the function
+base_filepath #prints the base filepath 
+
+```
+
+
+## Importing data: Data file structure
+
+The actual sales data and december prediction data sets are stored separately with corresponding .csv files for their column names. This means that the data should be imported without any column labels as read_csv() would use the first row of data as labels.
+
+The four snippets below import and show the structure of each .csv file
+
+
+
+```{r }
+library(tidyverse) #functions for data import and manipulation (using read_csv in this case)
+
+raw_decemberCols_df <- read_csv(
+  here("AssocDS_tosend",  "Data", "DecemberCols.csv"), # filepath to data (will need to add OSX path in this line for MAC)
+  col_names = FALSE # used to prevent first row of data being used as column labels
+)
+
+raw_decemberCols_df #prints december data column labels
+
+```
+
+
+
+```{r }
+
+raw_decemberAd_df <- read_csv(
+  here("AssocDS_tosend",  "Data", "DecemberAdData.csv"), # filepath to data (will need to add OSX path in this line for MAC)
+  col_names = FALSE # used to prevent first row of data being used as column labels
+)
+
+head(raw_decemberAd_df, 10) #prints 10 december data rows
+
+```
+
+
+```{r }
+
+
+raw_marketingCols_df <- read_csv(
+  here("AssocDS_tosend",  "Data", "MarketingCols.csv"), # filepath to data (will need to add OSX path in this line for MAC)
+  col_names = FALSE  # used to prevent first row of data being used as column labels
+)
+
+raw_marketingCols_df #prints marketing data column labels
+
+```
+
+
+```{r }
+
+raw_marketingsales_df <- read_csv(
+  here("AssocDS_tosend",  "Data", "MarketingSales.csv"), # filepath to data (will need to add OSX path in this line for MAC)
+  col_names = FALSE  # used to prevent first row of data being used as column labels
+)
+
+head(raw_marketingsales_df, 10) #prints december data rows
+
+```
+
+
+The data labels now need to be attached to their respective data tables.
+The two snippets below show the actual sales and december predictive datasets with feature labels
+
+
+```{r }
+
+colnames(raw_marketingsales_df) <- raw_marketingCols_df$X1 #reading down default x1 column as strings
+
+head(raw_marketingsales_df, 10) #prints 10 december data rows with added labels
+
+```
+
+
+```{r }
+
+colnames(raw_decemberAd_df) <- raw_decemberCols_df$X1 #reading down default x1 column as strings
+
+raw_decemberAd_df #prints december data rows with added labels
+
+```
+
+
+## Analysis: First look at the sales data
+
+R has an inbuilt summary function that gives summary statistics for each column.
+This will show the range and distribution of continuous data and counts for binary and factor data. It may also show if there are extreme values that may have been incorrectly entered or incorrect data types.
+
+
+```{r }
+
+summary(raw_marketingsales_df)
+
+```
+
+
+The sales summary shows that there can be quite a large variation in advertising spend and sales. The binary variables are also showing quartile ranges which means the column has been interpreted as a numeric column and not a factor. This needs to be corrected before analysis
+
+
+```{r }
+
+summary(raw_decemberAd_df)
+
+```
+
+
+The December marketing summary shows that there is again a large variation in advertising spend even across a single month. There are no columns which need their data types corrected as AdvertisingSpend is the only numeric column.
+
+Before deciding on a modelling approach, it is important to understand the nature of the dataset in terms of missing data or extreme / misentered values.
+Missing data can cause problems for certain modelling approaches, especially for time series data where many model types make estimates based on previous values and weightings.
+The snippets below show a counter of NA values in each dataset
+
+
+
+```{r }
+sum(which(is.na(raw_marketingsales_df), arr.ind=TRUE)) #returns count of NA values in table
+```
+
+
+```{r }
+sum(which(is.na(raw_decemberAd_df), arr.ind=TRUE)) #returns count of NA values in table
+```
+
+There are no missing values in either dataset so we can proceed to transforming the data.
+
+## Analysis: Transforming data for analysis
+
+
+Based on the assumptions provided by the marketing team, we can impute the features for the December ad spend data so that it matches the features of the marketing sales data. This allows a model trained on the marketing data to be used for prediction on the December data.
+
+The assumptions given by the marketing team for December 2020 are:
+
+* No expectation of a competition (Competition = 0)
+* No expectation of a positive news story (PositiveNews = 0)
+* No expectation of a negative news story (NegativeCoverage = 0)
+* The ultra vac will contine to be sold (UltraEdition_Available = 1)
+
+Additional sensible assumptions
+
+* No Covid-19 lockdown during December 2020 (COVID_Lockdown = 0)
+* Vac-Attacks continues to use a fixed hours 0508 line (0508Line_247 = 0)
+
+Additional features can also be made to get the day of the month (1-31) and the year (2016-2020) instead of just having the date and day of the week.
+The following snippets shows the data transformation to clean the data and add features for analysis.
+Any columns that need data type changes such as the date and binary columns that were imported as numeric are also transformed.
+
+
+```{r }
+library(lubridate) #date functions to reformat the charater format provided into ordered date format
+
+clean_marketingsales <- raw_marketingsales_df %>% 
+ mutate(Date = dmy(Date)) %>% #make a date format column
+ mutate(Day = factor(Day)) %>% #change character to factor
+ mutate(Month = factor(Month)) %>% #change character to factor
+ mutate(PositiveNews = factor(PositiveNews)) %>% #change numeric to factor
+ mutate(NegativeCoverage = factor(NegativeCoverage)) %>% #change numeric to factor
+ mutate(Competition = factor(Competition)) %>% #change numeric to factor
+ mutate(COVID_Lockdown = factor(COVID_Lockdown)) %>% #change numeric to factor
+ mutate(UltraEdition_Available = factor(UltraEdition_Available)) %>% #change numeric to factor
+ mutate(`0508Line_247` = factor(`0508Line_247`)) %>% #change numeric to factor 
+ mutate(Year = as.factor(substr(as.character(Date), 1, 4))) %>% #extract year datepart with substring
+ mutate(Day_of_month = as.factor(substr(as.character(Date), 9, 10))) #extract day of month datepart with substring
+
+names(clean_marketingsales)[8] <- 'Phoneline'  #changing 0508_line247 feature name as random forest libraries can have issues with predictor labels starting with numbers
+summary(clean_marketingsales)  #show summary for transformed data
+
+
+```
+
+
+The date column is now in a date format so will be correctly ordered for time series. The boolean columns are also two-level factors now and show counts of each level instead of quartiles. The same transformation must be done for the december ad spend data but the factor levels will be set based on the assumptions given by the marketing team
+
+```{r}
+clean_december_adspend <- raw_decemberAd_df %>% 
+ mutate(Date = dmy(Date)) %>% #make a date format column
+ mutate(Day = factor(Day)) %>% #change character to factor
+ mutate(Month = factor(Month)) %>% #change character to factor
+ mutate(PositiveNews = factor(0, levels = c(0, 1))) %>% #change character to factor
+ mutate(NegativeCoverage = factor(0, levels = c(0, 1))) %>% #change character to factor
+ mutate(Competition = factor(0, levels = c(0, 1))) %>% #change character to factor
+ mutate(COVID_Lockdown = factor(0, levels = c(0, 1))) %>% #change character to factor
+ mutate(UltraEdition_Available = factor(1, levels = c(0, 1))) %>% #change character to factor
+ mutate(`0508Line_247` = factor(0, levels = c(0, 1))) %>%  #change character to factor
+ mutate(Year = as.factor(substr(as.character(Date), 1, 4)))  %>% #extract year datepart with substring
+ mutate(Day_of_month = as.factor(substr(as.character(Date), 9, 10)))#extract day of month datepart with substring 
+
+names(clean_december_adspend)[10] <- 'Phoneline'  # changing 0508_line247 feature name as random forest libraries can have issues with predictor labels starting with numbers
+summary(clean_december_adspend)
+
+
+```
+
+
+
+## Analysis: Visualisation and Investigation
+
+Before deciding on a modelling approach, it is useful to visualise the data to find any obvious trends or unexpected observations.
+A simple plot of the sales over time can give a first insight in to the situation.
+
+
+```{r}
+clean_marketingsales %>% ggplot(aes(x=Date, y = Sales)) +geom_point() + theme_minimal() # use ggplot to plot sales data
+```
+
+
+Immediately you can see there is an annual trend with sales increasing through the year up to December. The increase appears to have an exponential curve leading from January to December. There is also a significant dropoff in sales from 23rd March to 15th May 2020 which was during the first level 3 & 4 COVID-19 Lockdown in New Zealand. This means the feature combines level 3 and level 4 lockdown which may have slightly different sales conditions.
+
+
+
+A LOESS smoothing function shows that there is indeed an exponential type curve for each year with a large disturbance from the COVID-19 lockdown
+
+
+```{r}
+clean_marketingsales %>% ggplot(aes(x=Date, y = Sales, color = Year )) + 
+
+ geom_smooth(method = 'gam') + 
+ theme_minimal()
+
+
+```
+
+
+
+There also appeared to be an overall year-on-year decrease in sales from eyeballing the data. Looking at the total sales each year from September to November will give us a picture without including the COVID-19 lockdown downturn.
+
+```{r}
+clean_marketingsales %>% filter(Month == 'September' |   #selecting only data from listed months
+                                Month == 'October'   | 
+                                Month == 'November') %>% 
+                         group_by(Year) %>% 
+                         summarise(sum(Sales))  #aggegated total sales by year
+```
+
+It seems as if Vac-Attack has not enjoyed steady year-on-year growth and the back end of 2020 has the lowest sales on record. The expectations of the marketing team may need to be tempered. The goal is for 3,900 sales in December 2020. Let's see how this target compares to previous years December sales. 
+
+
+```{r}
+clean_marketingsales %>% filter(Month == 'December' ) %>% 
+                         group_by(Year) %>% 
+                         summarise(sum(Sales))
+```
+
+
+The goal is higher than last years total for December and is roughly the same as 2016 which is the highest selling December in the data.  The target is also considerably higher than the 2018 and 2019 sales which also had the Ultra edition vac on sale. With an ambitious target for 2020 it will be important to see if there is a positive association between ad spend and sales. If so, the ad spend for 2020 would need to be sufficiently high to reach this goal despite 2020 having lower sales in general.
+
+
+## Selecting a model
+
+
+Due to the non-linear nature of the data, a simple linear regression will not be sufficient to accurately model the situation. There are also large discontinuities in the data where values change rapidly e.g. moving from December through to the next January causes a sharp drop in sales. There is the strong need for a seasonal component that captures the same point in the previous years as there is a strong annual pattern. There are many approaches that can account for seasonal effects and incorporate them into predictions such as:
+
+* GLMs
+* GAMs
+* Seasonal ARIMA models
+* Exponential smoothing models
+* Recurrent Neural network models
+
+There is also the requirement to be able to see and estimate the size of the ad-spend effect within the model to be confident that there is a strong positive association between ad spend and sales and to estimate roughly the budget required to meet certain sales thresholds all other things being equal.
+
+
+With all of the requirements and the nature of the marketing data in mind, a GAM (Generalized additive Model) was selected as a first approach. This is because a GAM can handle complex non-linear relationships such as the recurring sharp increase in sales each year whilst also having coefficients for parametric variables that can be explained like linear regression models. There are also some built in smoothing paramater optimization and over-smoothing penalties built in which can help avoid overfitting. The restricted maximum likelihood method `REML` is recommended for fitting the smoothing when the dataset is small.
+
+
+## Approach 1: Fitting a GAM with non-linear term for day of the year
+
+The snippet below fits an addative GAM with a spline for the day of the year (1 -365) for each year. Structuring the data this way allows for the coefficients of basis functions in the spline to increase as each year progresses forward. The rest of the features in the dataset are added as parametric variables so that we can estimate their effects on sales directly. This method may be less accurate for predicting variables far outside of the sample space than a more generalized model like seasonal ARIMA. Since we are drawing a spline for each year instead of comparing to last year, our model fit should be accurate for December data but the day of the year grouped spline would need to be ungrouped to go beyond that. It would also be worth considering encoding the year as a numeric counter starting from 1 to make seasonally adjusted models more applicable.
+
+
+```{r}
+library(mgcv) # package for fitting gam models
+
+ marketing_GAM <-  clean_marketingsales %>%mutate(Day_of_year = lubridate::yday(Date)) %>% #creating dataframe of marketing data with added numeric day of the year and day of the week columns
+                                            mutate(Day_of_week = lubridate::wday(Date))
+
+
+m_gam  <- gam(Sales ~ Day + Month + Year + PositiveNews + NegativeCoverage + Competition + AdvertisingSpend + Phoneline + UltraEdition_Available + COVID_Lockdown + Day_of_month + s(Day_of_year, by = Year, bs = 'ts') , data = marketing_GAM, method = "REML", select = TRUE)
+
+
+summary(m_gam)
+```
+
+
+The model summary indicates that our smoothing variable on day_of_year is statitically significant which justifies the use of a non-linear term in our model.
+The day_of_month variable however seems to have low coefficent estimates and low statistical significance. Creating a submodel for anova testing will show if this term is contributing to the model or if it could be removed. A Chi-squared test of the submodel will reveal if the term is decreasing model deviance significantly enough to justify the extra parameters. (shown as degrees of freedom in the anova test)
+
+```{r}
+sub_m_gam   <- gam(Sales ~ Day + Month + Year + PositiveNews + NegativeCoverage + Competition + AdvertisingSpend + Phoneline + UltraEdition_Available + COVID_Lockdown + s(Day_of_year, by = Year, bs = 'ts') , data = marketing_GAM, method = "REML", select = TRUE)
+
+anova(sub_m_gam, m_gam, test = "Chisq")
+```
+
+There is strong evidence to suggest we accept then null hypothesis that the submodel is appropriate based on the Chi squared p-value of 0.864.
+A high p-value indicates that the deviance improvement of 623.93 is not a significant enough improvement to justify adding the extra degrees of freedom that come with the `Day_of_month` categorical variable. Removing unneeded terms from the model is a way of preventing overfitting and arriving at a simple interpretable model. It may also be worth testing the `Day` categorical variable for significance but common sense around retail sales leads me to believe it is worth keeping in the model.
+
+
+
+
+The snippet below shows the estimated sales values for the known marketing data based on the GAM model
+
+```{r}
+
+gam_results <-  predict.gam(sub_m_gam, newdata = marketing_GAM) #using sub model to predict values for our known sales values
+plotgam <- marketing_GAM %>% mutate(modelled_result = gam_results) #adding a column for model results
+
+plotgam %>% ggplot(aes(x=Date, y = modelled_result)) +geom_point() + theme_minimal()
+```
+
+
+This plot looks very similar to the actual sales data plot from the analysis section. Of course it does because it was fitted to this data! 
+The model deviance may prove to be higher when estimating sales for December based on the new ad spend data.
+The snippet below produces predictions for December 2020 and visualises them on the original time series plot.
+
+
+## Making predictions based on the GAM
+```{r}
+GAM_december_prediction_set <-  clean_december_adspend %>%mutate(Day_of_year = lubridate::yday(Date)) %>% 
+                                            mutate(Day_of_week = lubridate::wday(Date)) #adding GAM features to prediction data
+
+
+Gam_prediction_results <- predict.gam(sub_m_gam, newdata = GAM_december_prediction_set)
+Gam_prediction_results
+
+```
+
+
+Predictions on the december data from the GAM model are roughly in the range of 90 - 135 with no extreme outlier predictions. 
+
+
+```{r}
+sum(Gam_prediction_results)
+```
+
+
+The predicted total sales for December 2020 is 3308, which is short of the marketing target of 3,900.
+We can plot the prediction results against our known sales data series as a sense check.
+
+
+```{r}
+
+prediction_data_gam <-  clean_december_adspend %>% select(Date) %>% 
+ mutate(Sales = Gam_prediction_results) %>% 
+ mutate(Predicted = 'Predicted')
+
+sales_data_gam <- clean_marketingsales %>% select(Date, Sales) %>% 
+  mutate(Predicted = 'Actual Sales')
+
+
+combined_data_gam <-  bind_rows(sales_data_gam, prediction_data_gam)
+
+
+combined_data_gam %>% ggplot(aes(x=Date, y = Sales, color = Predicted)) +geom_point() + theme_minimal()
+
+```
+
+The predictions look sensible to an eyeball check as the results are in line with our expectation of December being a strong month for sales but also having 2020 sales overall being at a slightly lower level than previous years. There are also no values that are extreme compared to historical values for December.
+
+
+
+## Alternative Approaches to GAM
+
+A similar approach I considered for traditional regression modelling of the data was to use a GLM instead of a GAM with a quadratic term for day_of_the_year. Overall I believe this would give a similar result but I favoured the GAM as drawing a spline for each year was a simple solution to capture different economic conditions between years that may affect sales and having info from Jan - Nov 2020 allowed us to model a 2020 spline which given the unique nature of events in 2020 should be a positive for December prediction power. A GLM could also use the ANOVA method shown above to see if a quadratic term is sensible for the model. A standard seasonalregression model may be more applicable to longer term predictions as currently there is no fitted smoothing for 2021 and beyond.
+
+
+## Advantages and disadvantages
+
+
+### Advantages of this approach:
+
+* Parametric method that has some flexibility for complex non-linear relationships (used yearly spline)
+* Can directly view and compare parameter estimates for each feature which allows the model to be interpreted like a linear regression 
+* Can easily compare the model with extra features or removed features to gauge their importance in the model
+* Lots of insights for stakeholders when they are interested in what contributed to the prediction as opposed to just the raw output
+
+### Disadvantages of this approach:
+
+* Smooth functions tend to overfit easily (grouped spline for each year will closely align with their individual exponential shapes)
+* Loss of prediction power when smoothed values go outside of the training set (fitted a smooth for 2020 up to November with training dataset then applied to December, but how would a 2021 prediction go with no fitted 2021 smooth??)
+
+
+
+
+
+## Explaining the model to a non-technical audience.
+
+The marketing team are interested in the effect of ad spend on sales, the predicted sales vs the target and what needs to be done to match the amount of stock to the forecasted sales numbers.
+
+Since the adspend term is parametric in our GAM model we can make some claims around the advertising spend based on the coefficient estimates.
+
+```{r}
+coef(sub_m_gam)[names(coef(sub_m_gam)) %in% c("Year2020", "AdvertisingSpend", "UltraEdition_Available1")]
+summary(sub_m_gam)
+```
+
+
+The large negative coefficient for `Year2020` shows that 2020 is a poor year for sales compared to 2016. The model estimates that on any given day the sales in 2020 will be around 13 lower than 2016. This can be used to explain why their target of 3,900 may have been too ambitious if it was based on previous sales (2016 was the only year that exceeded 3,900 unit sales in December). A discussion should be had around setting expectations and explaining that 3,900 sales may not be achieved without a significant ad spend. The marketing team may have believed that the 2020 drop in Sales was just due to the COVID lockdown but the model accounts for the lockdown and we can say that 2020 overall has lower sales than previous years based on the coefficent estimate.
+
+The large positive value of `UltraEdition_Available1` backs up the claim from marketing that the Ultra edition vac is good for sales, even with sales declining in general since the Ultra edition vac was offered. According to the model, negative news coverage, the loss of a 24/7 phoneline and the COVID lockdown have negative effects on sales.
+
+In terms of actionable advice to the marketing team, the `AdvertisingSpend` coefficient can give a rough estimate of the magnitude of spending required to reach the target.
+With a coefficient value of 0.00142, 1 extra dollar of advertising spend corresponds to an extra 0.00142 sales in the model which equates to roughly \$704 spend for one sale.
+
+
+Of course these coefficents are just an estimate of the true value and they have an estimated standard error associated with them. I would not go this far into detail when explaining advertising spend options with the team. Instead I would give a few scenarios and present a best and worst case scenario. With a predicted total sales of 3308 vs a 3900 target the model estimates an adertising increase of \$704 for each of the 592 extra sales we need to meet the target (\$416900). I would use this rough figure as a jumping off point into discussions around
+
+*Is it worth spending \$700 or more in advertising for one sale (It may be if the Ultra vac is very expensive / profitable)
+*How much is normally spent on advertising in December
+*How much budget is there to increase ad spend.
+*The model indicates that quite a lot of ad spend is required to increase sales, is this true in your experience?
+
+
+
+```{r}
+clean_marketingsales %>% filter(Month == 'December' ) %>% 
+                         group_by(Year) %>% 
+                         summarise(sum(AdvertisingSpend), sum(Sales))
+```
+
+It appears that the total advertising spend in previous years is far less than what is needed to bring sales to 3,900 units according to the GAM model.
+The model estimates that sales are quite insensitive to the amount of ad spend so it may be worth investing money elsewhere such as bringing back the 24/7 phoneline or generating positive news events. This can be communicated to the marketing teams if they wantto conduct a cost-benefit analysis.
+
+We can also use our predicted values to help with stocking of the store.
+The total stock estimate of 3308 is useful but should be used as a guide only or as a minimum to avoid being significantly understocked.
+Where the predictions can be useful is in giving advice around specific periods when sales can fluctuate
+
+The table below shows the GAM estimated sales from Christmas eve to new years eve 2020
+```{r}
+Gam_prediction_results[24:31]
+```
+
+It would be useful to the operations team to expect low sales on christmas day and increased sales on boxing day (which they probably already know).
+There is also a very high predicted sales value on the 29th after a lull in sales on the 27-28th. This may be less expected so it is important to have stock to cover a potentially high-sales day.
+
+Overall, when discussing modelling it is important to use the features of the model to open a discussion with the relevant teams instead of treating the model as gospel. I would be especially careful around predicted values and giving definitive numbers based on modelling results e.g. 'you must spend exactly \$416900 then you will achieve 3,900 sales' is not how you should be communicating. Model results ideally should be used to open a discussion around options and what may or may not be feasible. I would use these modelling results to suggest that 3,900 sales may not be feasible without significant advertising investment or a large unexpected turnaround in the 2020 economic environment. Communicating in this way also allows stakeholders to provide their knowledge and unique understanding of the situation to improve the model e.g. operations team may already be aware of high sales on 29th December as some orders from around christmas aren't processed until then. 
+
+
+
+
+
+## Approach 2: Fitting a random forest model to the marketing data.
+
+A GAM sits more on the side of traditional regression methods, which are more interpretable but are slightly less flexible. A machine learning method can provide a lot more flexibility that often leads to superior predictive power at the cost of not knowing exactly how the model is made up. When results need to be explained in terms of a feature like marketing being interested in the advertising spend, an ML approach is not always advised due to not being able to directly assess the magnitude of each feature on the output. That being said I was curious if an ML approach would yield similar results to a more traditional regression approach.
+
+I chose to run a random forest model as decision trees tend to work well with categorical data and the marketing data has plenty of multi_level categorical features that can be encoded into their own individual features. This may be a good approach to capturing the effect of a sales day being in a certain month or being in a Lockdown. Random forests avoid overfitting by constructing many decision trees that are decorrelated from eachother by only using a bootstrapped subset of observations and features. An unbiased estimate of the predicition error can then be produced by running oservations through the trees that were not built using that observation (Out of bag error). It should also noted that random forests tend to perform better in classification tasks.
+
+
+
+
+## Feature engineering: One-Hot Encoding.
+
+
+The marketing dataset has a few categorical variables which we know are important for prediction. The GAM model and our own understanding of the data suggests the day of the week, month and year are important features. These categorical variables can be prepared for machine learning model training using One-Hot encoding. This takes every level of the category and creates a binary column for each level e.g. the `Month` feature would become 12 columns with a binary outcome for each month. The snippet below uses the caret package to spread our important categorical variables for use in the random forest model
+
+
+```{r}
+
+library(caret)
+
+dummy <-  dummyVars(~ Year + Month + Day, data = clean_marketingsales) # set features for encoding
+one_hot_vars <- data.frame(predict(dummy, newdata=clean_marketingsales)) #spread features to one-hot
+head(one_hot_vars,10) #view new features
+ 
+```
+
+
+There are now unique features for every level that the random forest model can use to fit decision trees.
+This process will also need to be done on the december ad spend prediction data in order to match the features
+
+```{r}
+
+library(caret)
+
+removed_cleanmarketingsales <-  clean_marketingsales[, ! names(clean_marketingsales) %in% c("Year", "Month", "Day")]
+clean_marketingsales <- bind_cols(removed_cleanmarketingsales, one_hot_vars)
+summary(clean_marketingsales)
+
+
+
+dummy_december <-  dummyVars(~ Year + Month + Day, data = clean_december_adspend)
+one_hot_vars_december <- data.frame(predict(dummy, newdata=clean_december_adspend))
+
+
+
+removed_cleandecember <-  clean_december_adspend[, ! names(clean_december_adspend) %in% c("Year", "Month", "Day")]
+clean_december_adspend <- bind_cols(removed_cleandecember, one_hot_vars_december)
+
+ #view the ranger model output
+```
+
+We now have a variable for each level of our categorical variables. This significantly widens the dataset. Random forests work best when not every feature is used to build each tree. When each tree is built using a different subset of features, the trees are decorrelated from eachother which leads to more powerful prediction and less overfitting. The `mtry` value denotes how many randomly sampled features to try at each split. A good rule of thumb is to use the square root of the number of features in your dataset to avoid each tree becoming too similar. The snippet below runs a basic random forest model with an `mtry` of 6 which is roughly the square root of the 33 features used.
+
+```{r}
+
+library(ranger)
+set.seed(1234)
+
+
+
+sales_rf_ranger <-  ranger(formula = Sales ~ ., data = clean_marketingsales[,-1],
+                           num.trees = 500,   #should be sufficient but can check vs MSE
+                           mtry = 6,          #roughly sqrt(n) for decorrelation
+                           importance = 'impurity') #gini impurity measure of how important each feature was
+
+sales_rf_ranger #view the ranger model output
+```
+
+
+In the GAM model we could estimate the size of the effect each variable had on the prediction which made it very easy to explain how we were arriving at the predictions we did for each date. A random forest model (and most other ML models) are more flexible than standard regression techniques but are also harder to interpret. A measure for the importance of each variable is the gini impurity which measures how much the variance of the regression model decreases when the variable is used in a split. This can be communicated to a stakeholder in terms of which variables are most and least important for prediction, but the size of the effect is unclear. This makes the interpretation great for comparing models but not in estimating dollar values of ad spend required for specific sales targets. For this model, we could say that the Advertising spend is a very important predictive feature in our model, second only to the binary variable for if the observation is in December. The snippet below shows an ordered list of importance scores for each feature.
+
+
+
+```{r}
+sales_rf_ranger$variable.importance[rev(order(sales_rf_ranger$variable.importance))] #show variable importance in descending order
+
+```
+
+
+This result is useful as a starting point with an MSE of 47.47 but there are a few hyperparamters that can be tuned to make the model a better predictor for this specific data. Testing each combination of hyperparameters can be computationally expensive in very large datasets but our sales data is small enough for a full grid search.
+First we should try checking that 500 trees is sufficient to minimize our mean squared error without being excessive.
+
+
+```{r}
+number_of_trees <- seq(1, 501, 10) #sequence by 10 
+OutofBag_RMSE <- vector("numeric", length(number_of_trees)) #set a vector to store error result for each run
+
+for(i in 1:length(number_of_trees)){
+  rf <- ranger(formula = Sales ~ ., data = clean_marketingsales[,-1], num.trees = number_of_trees[i], mtry = 6, write.forest = FALSE) #run random forest
+  OutofBag_RMSE[i] <- sqrt(rf$prediction.error) #record error
+}
+
+
+error_plot_data <-  as.data.frame(cbind(number_of_trees, OutofBag_RMSE)) #combining the tree count vector with the respective RMSE for plotting
+
+error_plot_data %>% ggplot(aes(x=number_of_trees, y = OutofBag_RMSE)) +geom_line() + theme_minimal()
+```
+
+
+The full forest of 500 trees is excessive in this case as the Out of bag RMSE has very diminishing returns after around 100 trees. For data this size creating a 500 tree model wont be too computationally intensive but it becomes very important when the dataset is large to not have unnecesarily large forests. This is especially true when it comes to tuning hyperparameters to optimize the model.
+
+
+With this in mind the model hyperparameters will be optimized based on a forest size of 300 trees.
+The following code produces the grid of hyperparamters for a looped grid search
+
+```{r}
+
+param_grid <-  expand.grid(
+ mtry = seq(4,22 , by = 2),  #adjust how many predictors are available for each tree build
+ node_size = seq(2,10, by = 2), #controls the depth of each tree 
+ sample_size = c(.55 , .63, .7, .77, .84), #controls the proportion of data goes into the training set
+ OutofBag_RMSE = 0   #dummy vector full of 0 values to be filled by the RMSE for each hyperparameter combination
+)
+
+nrow(param_grid) # 250 unique combinations of the 3 selected hyperparameters
+```
+
+A random forest model with each of the parameter combinations in the grid is built and the MSE is recorded. The top 10 results are shown below
+
+```{r}
+
+for(i in 1:nrow(param_grid)) {
+ 
+ model <- ranger(formula = Sales ~ .,
+                 data = clean_marketingsales[,-1],
+                 num.trees = 300,              #changed to 300 to save computation time
+                 mtry = param_grid$mtry[i],
+                 min.node.size = param_grid$node_size[i],
+                 sample.fraction = param_grid$sample_size[i],
+                 seed = 1234) # same random seed
+ 
+ #record the RMSE after each run
+ param_grid$OutofBag_RMSE[i] <- sqrt(model$prediction.error)
+ 
+}
+
+param_grid %>% dplyr::arrange(OutofBag_RMSE) %>%  head(10) #show top 10 runs
+
+```
+
+
+The top model in our optimisation used an mtry of 14, node_size of 6 and a sample size of 0.77. These hyperparamaters can be used to construct our optimised forest model to make predictions.
+
+
+```{r}
+
+set.seed(1234)
+
+
+optimized_sales_rf <-  ranger(formula = Sales ~ ., data = clean_marketingsales[,-1], 
+                              num.trees = 300, 
+                              mtry = 14,  #optimised value
+                              min.node.size = 6, #optimised value
+                              sample.fraction = 0.77, #optimised value
+                              importance = 'impurity')
+
+optimized_sales_rf
+
+```
+
+Our Decembers sales data can now be run through the optimized random forest model to generate predicted unit sales. The optimization lowered our OOB-MSE from 47.47 to 41.50
+The snippet below prints the individual December 2020 sales predictions and their total 
+
+```{r}
+
+random_forest_predictions <-  predict(optimized_sales_rf, clean_december_adspend) #run new data through trained model
+random_forest_predictions$predictions #output the predicted unit sales for each day
+sum(random_forest_predictions$predictions) #output the total predicted december sales
+
+```
+
+Based on the sum of predictions the total sales for December 2020 is predicted as 3552 units. This is higher than the GAM model prediction of 3308 but is still well short of the 3,900 goal set by marketing. Interestingly, the 29th of December shows a large predicted sales value much like the GAM model.
+The issue with a random forest model or other 'black box' machine learning algorithms is that their lack of interpretability limits the advice we can give to marketing. They are interested in how they could adjust the ad spend to meet or exceed the sales target but the random forest model doesn't provide the size of the ad spend effect or even if they are positively associated with eachother. 
+
+
+Again, the marketing and december sales prediction data can be combined to let us view our predictions on the time series plot.
+
+```{r}
+prediction_data <-  clean_december_adspend %>% select(Date) %>% 
+ mutate(Sales = random_forest_predictions$predictions) %>% 
+ mutate(Predicted = 'Predicted')
+
+sales_data <- clean_marketingsales %>% select(Date, Sales) %>% 
+  mutate(Predicted = 'Actual Sales')
+
+
+combined_data <-  bind_rows(sales_data, prediction_data)
+combined_data %>% ggplot(aes(x=Date, y = Sales, color = Predicted)) +geom_point() + theme_minimal()
+```
+
+
+The predictions seem sensible and account for December being a typically high sales month.
+Predictions from the random forest model are generall slightly higher than the GAM predictions
+
+
+
+## Alternative Approaches to random forest
+
+There are many ML algorithms that can be used for regression such as boosted trees or gradient descent. A random forest model was selected to use our multi-level categorical variables but is possibly more suited for classification that regression typically. The are a lot of ML algorithms developed specifically for regression that could be explored such as Ridge, Lasso and Elastic-Net which contain penalties for model complexity that reduce overfitting.
+These would be preferable over something more complex like an LSTM for Vac-Attack's purposes as they are a lot closer to traditional regression methods and are thus more interpretable.
+
+
+
+## Advantages and disadvantages
+
+
+
+### Advantages of this approach:
+
+* Flexible algorithm tuned specifically for out of bag prediction power
+* Small dataset allowed for grid search optimization of hyperparameters (for GAM we let R choose the best smoothing factor)
+* Scores for which features were most important in the model
+* Possibly more accurate for data further in time away from our known observations (GAM had a grouped spline smoothed to each year which may not be accurate when making predictions to 2021 which had no training data)
+*Usually no need for normalisation or feature scaling in the data prep stage
+
+### Disadvantages of this approach:
+
+* Black box non-parametric model is very fast and flexible but offers almost no interpretability around the issues the marketing team wanted insights on
+* Could lose predictive power as the year extends beyond 2020 due to being trained up to 2020 only
+* Variable importance scores can be biased towards features with a lot of levels so need to be careful with encoding
+* Can be poor as a regression model when new data has values outside the training range due to the amount of averaging in a forest model (Not a huge problem for our data but could be poor for predicting an extremely high December sales month or another lockdown period) 
+
+## explaining the model to a non-technical audience.
+
+* In general the random forest model gives us less insight than the GAM model as it is a non-parametric method
+* Beyond raw predictions, we could say which features were important in fitting the model 
+* We can say that the predicted total sales is comfortably below the target but we cannot say exactly how the predictions were built up or give estimates of how much ad spend is required.
+
+
+
+
+## Conclusion
+
+For the Vac-Attack sales analysis, I would favour the GAM approach as the marketing team is interested in model insights and estimates of the effects of features as well as prediction power. This approach allowed us to show that a significant ad spending investment is required and that other factors may be considered to increase sales if ad spending became too expensive. I would also change the GAM to be more generic if predictions further in time from the training data was required. 
+
+
+
+
+## Ways to improve / extend the analysis 
+
+* Incorporate more business data to search for lurking variables: We could collect more rich info such as the number of sales for each individual product and their respective retail prices on a given day. We may be viewing a decrease in overall unit sales but if people are moving towards purchasing an ultra-edition vac at a high sales price this could be a positive.
+
+* Investigate the realtionship between the ultra-edition vac offering and sales: The marketing team believes that there is a positive effect on sales by offering the ultra-edition vac which was shown to not be a large contributing factor in either the GAM or random forest model. We could approach them for more info and rationale of why they believe the ultra-edition vac is driving sales to complete a separate analysis
+
+* Incorporate more robust error estimates / cross validation for predictions and effect sizes: Using the inbuilt likelihood based optimizer for the GAM and an OOB-MSE based optimisation for the random tree model is fine for a quick analysis but for more robust applications a full k-folds cross validation or similar would be desireable. Could also delve more into the error intervals associated with predictions although a stkeholder may not necessarily like this approach
+
+* Use assumptions/knowledge around retail sales to explore extra feature ideas: There is a limitless amount of feature engineering that could be done with enough time that could improve the model. Adding binary variables for `is_a_weekend` , `is_a_public_holiday` and `is_boxing_day` could all potentially increase the predictive power of the model based on what we know about retail sales in general.
+
+* Investigate the effect of the various sales channels: The marketing team is changing their marketing mix so it would be interesting to know the effect on sales, especially given that sales hit such a low during lockdown. It may be the case that the company could benefit from more digital advertising and a more online sales platform.
+
+* Try a lasso regression: It would be interesting to see which parameters of the model are removed and if this was in line with my intuition about the data.
+
+### Thanks for reading and considering me for this role :)
